@@ -85,7 +85,8 @@ if st.session_state.sayfa == 'detay':
     
     if 'link' in item: # Bu bir haberdir
         st.title(item.title)
-        st.caption(f"Kaynak: {item.source.name} | [Habere Git]({item.link})")
+        kaynak_adi = item.source.title if 'source' in item else "Küresel Medya"
+        st.caption(f"Kaynak: {kaynak_adi} | [Habere Git]({item.link})")
         with st.spinner("Analist makaleyi hazırlıyor..."):
             analiz = client.models.generate_content(model='gemini-2.5-flash', contents=f"Şu haberi detaylı bir sektörel makaleye dönüştür: {item.title}")
             st.markdown(analiz.text)
