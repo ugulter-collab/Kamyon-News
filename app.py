@@ -1,3 +1,4 @@
+import urllib.parse
 import streamlit as st
 from google import genai
 from googleapiclient.discovery import build
@@ -66,7 +67,9 @@ def resim_bul(url):
 # --- KATEGORİ BAZLI VERİ ÇEKME FONKSİYONU ---
 @st.cache_data(ttl=3600)
 def kategori_verisi_getir(sorgu, adet):
-    rss_url = f"https://news.google.com/rss/search?q={sorgu}&hl=en-US"
+    # Boşlukları ve özel karakterleri internetin anlayacağı formata çevirir (URL Encoding)
+    guvenli_sorgu = urllib.parse.quote(sorgu)
+    rss_url = f"https://news.google.com/rss/search?q={guvenli_sorgu}&hl=en-US"
     feed = feedparser.parse(rss_url)
     return feed.entries[:adet]
 
