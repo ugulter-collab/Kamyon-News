@@ -7,29 +7,42 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import time
 
-# --- ANAHTARLAR ---
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+# --- ANAHTARLAR (BULUT GÜVENLİĞİ) ---
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+except:
+    st.error("API Şifreleri bulunamadı. Lütfen Streamlit Cloud 'Secrets' bölümünü kontrol edin.")
+    st.stop()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
-# --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Trucker.News", page_icon="🚛", layout="wide")
+# --- SAYFA AYARLARI VE KANTAN CSS ---
+st.set_page_config(page_title="Trucker.News", page_icon="🚛", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     body { background-color: #0e1117; }
-    .kantan-title { font-family: 'Helvetica Neue', sans-serif; font-size: 3rem; font-weight: 900; color: #ffffff; letter-spacing: -1.5px; }
+    .kantan-title { font-family: 'Helvetica Neue', sans-serif; font-size: 3rem; font-weight: 900; color: #ffffff; letter-spacing: -1.5px; margin-bottom: 0px;}
     .kantan-title span { color: #e63946; }
-    .kantan-date { font-family: monospace; color: #888888; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 30px; }
-    .card-container { background-color: #161b22; border-radius: 10px; padding: 0px; transition: 0.3s; border: 1px solid #30363d; margin-bottom: 25px; height: 100%; }
-    .card-container:hover { border-color: #e63946; transform: translateY(-5px); }
-    .card-img { width: 100%; height: 200px; object-fit: cover; border-radius: 10px 10px 0 0; }
-    .card-content { padding: 15px; }
-    .card-title { font-size: 1.1rem; font-weight: bold; color: #f0f6fc; line-height: 1.4; margin-bottom: 10px; }
-    .card-meta { font-size: 0.7rem; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+    .kantan-date { font-family: monospace; color: #888888; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
+    
+    /* Kart Tasarımları */
+    .card-container { background-color: #161b22; border-radius: 8px; transition: 0.3s; border: 1px solid #30363d; margin-bottom: 20px; overflow: hidden;}
+    .card-container:hover { border-color: #e63946; transform: translateY(-3px); }
+    .tag-news { background-color: #333; color: white; padding: 3px 8px; font-size: 0.7rem; font-weight: bold; border-radius: 3px; }
+    
+    /* Sekme (Tab) Tasarımları */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #0e1117; padding-bottom: 5px; border-bottom: 2px solid #30363d;}
+    .stTabs [data-baseweb="tab"] { background-color: #161b22; border-radius: 4px 4px 0px 0px; padding: 10px 20px; color: #888; border: 1px solid #30363d; border-bottom: none;}
+    .stTabs [aria-selected="true"] { background-color: #e63946 !important; color: white !important; font-weight: bold; border-color: #e63946 !important;}
+    
+    /* Son Haberler Liste Tasarımı */
+    .latest-news-row { padding: 15px 0; border-bottom: 1px solid #30363d; display: flex; align-items: center;}
+    .latest-date { font-family: monospace; color: #e63946; font-size: 0.9rem; min-width: 120px; }
+    .latest-title { font-size: 1.1rem; color: #e0e0e0; font-weight: 600; text-decoration: none;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -37,101 +50,155 @@ st.markdown("""
 @st.cache_data(ttl=3600)
 def resim_bul(url):
     try:
-        # Gerçek bir tarayıcı gibi davranan header
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        # Google News linklerini takip et (allow_redirects=True)
-        r = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
         soup = BeautifulSoup(r.content, 'html.parser')
-        
-        # og:image veya twitter:image meta etiketlerini ara
         meta_image = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
-        
         if meta_image and meta_image.get("content"):
             return meta_image["content"]
-            
-        # Eğer meta etiketi yoksa sayfadaki ilk büyük resmi bulmaya çalış
         for img in soup.find_all('img'):
-            if img.get('src') and ('http' in img['src']) and (int(img.get('width', 0)) > 200 or 'banner' in img['src'] or 'headline' in img['src']):
+            if img.get('src') and ('http' in img['src']) and (int(img.get('width', 0)) > 200):
                 return img['src']
     except:
         pass
-    # Hepsinde başarısız olursa kaliteli bir endüstriyel görsel döndür
     return "https://images.unsplash.com/photo-1586191582056-96fcfdf9fd8b?auto=format&fit=crop&q=80&w=800"
 
+# --- KATEGORİ BAZLI VERİ ÇEKME FONKSİYONU ---
 @st.cache_data(ttl=3600)
-def verileri_hazirla():
-    rss_url = "https://news.google.com/rss/search?q=heavy+duty+trucks+innovations&hl=en-US"
-    haberler = feedparser.parse(rss_url).entries[:12]
-    
-    istek = youtube.search().list(q='heavy duty truck innovations 2026', part='snippet', type='video', maxResults=3, order='relevance')
-    videolar = istek.execute().get('items', [])
-    
-    return haberler, videolar
+def kategori_verisi_getir(sorgu, adet):
+    rss_url = f"https://news.google.com/rss/search?q={sorgu}&hl=en-US"
+    feed = feedparser.parse(rss_url)
+    return feed.entries[:adet]
 
-# --- SESSION STATE ---
+# --- SESSION STATE (SAYFA YÖNETİMİ) ---
 if 'sayfa' not in st.session_state: st.session_state.sayfa = 'ana'
 if 'secili' not in st.session_state: st.session_state.secili = None
 
-# --- EKRAN 1: DETAY SAYFASI ---
+def detaya_git(icerik):
+    st.session_state.secili = icerik
+    st.session_state.sayfa = 'detay'
+
+def anasayfaya_don():
+    st.session_state.sayfa = 'ana'
+
+
+# ==========================================
+# 1. GÖRÜNÜM: DETAY SAYFASI
+# ==========================================
 if st.session_state.sayfa == 'detay':
-    if st.button("← Akışa Geri Dön"): 
-        st.session_state.sayfa = 'ana'
-        st.rerun()
-    
+    st.button("← Portala Geri Dön", on_click=anasayfaya_don)
     item = st.session_state.secili
     st.write("---")
     
-    if 'link' in item: # Bu bir haberdir
-        st.title(item.title)
-        kaynak_adi = item.source.title if 'source' in item else "Küresel Medya"
-        st.caption(f"Kaynak: {kaynak_adi} | [Habere Git]({item.link})")
-        with st.spinner("Analist makaleyi hazırlıyor..."):
-            analiz = client.models.generate_content(model='gemini-2.5-flash', contents=f"Şu haberi detaylı bir sektörel makaleye dönüştür: {item.title}")
-            st.markdown(analiz.text)
-    else: # Bu bir videodur
-        st.title(item['snippet']['title'])
-        st.video(f"https://www.youtube.com/watch?v={item['id']['videoId']}")
-        with st.spinner("Video içeriği yazılı habere dönüştürülüyor..."):
-            analiz = client.models.generate_content(model='gemini-2.5-flash', contents=f"Bu video içeriğini profesyonel bir yazılı habere dönüştür: {item['snippet']['title']}. Detaylar: {item['snippet']['description']}")
-            st.markdown(analiz.text)
+    st.title(item.title)
+    kaynak = item.source.title if 'source' in item else "Sektörel Medya"
+    st.caption(f"Kaynak: {kaynak} | [Orijinal Makaleye Git]({item.link})")
+    
+    with st.spinner("Yapay Zeka makaleyi sektörel bir derinlikle analiz ediyor..."):
+        try:
+            analiz = client.models.generate_content(model='gemini-2.5-flash', contents=f"Şu haberi detaylı, profesyonel bir sektörel makaleye dönüştür: {item.title}")
+            st.markdown(f'<div style="font-size: 1.1rem; line-height: 1.8; color: #e0e0e0;">{analiz.text}</div>', unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Analiz sırasında bir hata oluştu: {e}")
 
-# --- EKRAN 2: ANA SAYFA ---
+# ==========================================
+# 2. GÖRÜNÜM: ANA SAYFA (PORTAL)
+# ==========================================
 else:
+    # Üst Başlık
     st.markdown('<p class="kantan-title">TRUCKER<span>.NEWS</span></p>', unsafe_allow_html=True)
-    st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y")} | STRATEJİK İSTİHBARAT</p>', unsafe_allow_html=True)
-    
-    with st.spinner('Gerçek zamanlı görseller ve haberler derleniyor...'):
-        haberler, videolar = verileri_hazirla()
+    st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y")} | GLOBAL AĞIR VASITA İSTİHBARATI</p>', unsafe_allow_html=True)
 
-    # VİDEO BÖLÜMÜ
-    st.subheader("📺 Video Analizleri")
-    v_cols = st.columns(3)
-    for i, v in enumerate(videolar):
-        with v_cols[i]:
-            st.image(v['snippet']['thumbnails']['high']['url'], use_container_width=True)
-            st.markdown(f'<p class="card-title">{v["snippet"]["title"][:60]}...</p>', unsafe_allow_html=True)
-            if st.button("İncele", key=f"v_{i}", use_container_width=True):
-                st.session_state.secili = v
-                st.session_state.sayfa = 'detay'
-                st.rerun()
+    # --- KATEGORİ SEKMELERİ (TABS) ---
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🌟 Öne Çıkanlar", 
+        "🖥️ HMI", 
+        "📡 Connectivity", 
+        "🛡️ Sürücü Asistanı", 
+        "⚡ Elektrifikasyon", 
+        "🏭 Üreticiler"
+    ])
 
-    st.write("---")
-    st.subheader("📰 Yazılı Haber Akışı")
-    
-    # 12 HABER GRİD (4 satır x 3 sütun)
-    for row in range(0, 12, 3):
-        cols = st.columns(3)
-        for i in range(3):
-            idx = row + i
-            if idx < len(haberler):
-                h = haberler[idx]
-                with cols[i]:
-                    img_url = resim_bul(h.link)
-                    st.image(img_url, use_container_width=True)
-                    st.markdown(f'<p class="card-title">{h.title[:85]}...</p>', unsafe_allow_html=True)
-                    if st.button("Detayları Oku", key=f"h_{idx}", use_container_width=True):
-                        st.session_state.secili = h
-                        st.session_state.sayfa = 'detay'
-                        st.rerun()
+    # Kategori Sorgu Tanımları
+    sorgular = {
+        "HMI": "heavy duty trucks HMI OR dashboard OR user interface",
+        "Connectivity": "heavy duty trucks connectivity OR telematics OR software",
+        "ADAS": "heavy duty trucks ADAS OR active brake assist OR driver assistance",
+        "Elektrifikasyon": "heavy duty trucks electric OR EV OR battery",
+        "Üretici": "heavy duty trucks MAN OR Scania OR Mercedes-Benz"
+    }
+
+    # --- SEKME 1: ÖNE ÇIKANLAR VE SON HABERLER ---
+    with tab1:
+        with st.spinner('Ana akış derleniyor...'):
+            # İlk sayfa için geniş bir havuz (15 haber) çekiyoruz
+            genel_haberler = kategori_verisi_getir("heavy duty trucks innovations", 15)
+            
+        if genel_haberler:
+            st.subheader("🔥 Günün Öne Çıkanları")
+            # İlk 3 haberi manşet (Hero) olarak büyük kartlarla basıyoruz
+            hero_cols = st.columns(3)
+            for i in range(3):
+                if i < len(genel_haberler):
+                    h = genel_haberler[i]
+                    with hero_cols[i]:
+                        img_url = resim_bul(h.link)
+                        st.image(img_url, use_container_width=True)
+                        st.markdown('<span class="tag-news">MANŞET</span>', unsafe_allow_html=True)
+                        st.markdown(f'<p style="font-size: 1.2rem; font-weight: bold; margin-top: 10px;">{h.title[:80]}...</p>', unsafe_allow_html=True)
+                        st.button("İncele", key=f"hero_{i}", on_click=detaya_git, args=(h,), use_container_width=True)
+
+            st.write("---")
+            
+            # Geri kalan 12 haberi "Yeniden Eskiye" sıralayıp liste halinde basıyoruz
+            st.subheader("⏱️ Son Haberler (Kronolojik)")
+            
+            kalan_haberler = genel_haberler[3:]
+            
+            def parse_date(entry):
+                if 'published_parsed' in entry:
+                    return time.mktime(entry.published_parsed)
+                return 0
+
+            # Tarihe göre sıralama (En yeni en üstte)
+            sirali_haberler = sorted(kalan_haberler, key=parse_date, reverse=True)
+            
+            for i, h in enumerate(sirali_haberler):
+                # Tarih formatını okunabilir hale getirme
+                tarih_str = "Tarih Yok"
+                if 'published_parsed' in h:
+                    dt = datetime.fromtimestamp(time.mktime(h.published_parsed))
+                    tarih_str = dt.strftime("%d %b %H:%M")
+
+                col1, col2 = st.columns([1, 5])
+                with col1:
+                    st.markdown(f'<p class="latest-date">{tarih_str}</p>', unsafe_allow_html=True)
+                with col2:
+                    st.button(h.title, key=f"latest_{i}", on_click=detaya_git, args=(h,), use_container_width=True)
+
+
+    # --- DİĞER KATEGORİ SEKMELERİNİ OLUŞTURAN YARDIMCI FONKSİYON ---
+    def kategori_sekmesi_olustur(sorgu, tab_adi):
+        with st.spinner(f'{tab_adi} verileri taranıyor...'):
+            haberler = kategori_verisi_getir(sorgu, 6) # Her grup için 6 haber
+            
+        if haberler:
+            # 6 haberi 2 satır, 3 kolon (Grid) şeklinde basıyoruz
+            for row in range(0, 6, 3):
+                cols = st.columns(3)
+                for i in range(3):
+                    idx = row + i
+                    if idx < len(haberler):
+                        h = haberler[idx]
+                        with cols[i]:
+                            img_url = resim_bul(h.link)
+                            st.image(img_url, use_container_width=True)
+                            st.markdown(f'<p style="font-size: 1.05rem; font-weight: bold; margin-top:10px;">{h.title[:80]}...</p>', unsafe_allow_html=True)
+                            st.button("Detay", key=f"{tab_adi}_{idx}", on_click=detaya_git, args=(h,), use_container_width=True)
+
+    # --- DİĞER SEKMELERİ DOLDURMA ---
+    with tab2: kategori_sekmesi_olustur(sorgular["HMI"], "HMI")
+    with tab3: kategori_sekmesi_olustur(sorgular["Connectivity"], "Conn")
+    with tab4: kategori_sekmesi_olustur(sorgular["ADAS"], "ADAS")
+    with tab5: kategori_sekmesi_olustur(sorgular["Elektrifikasyon"], "EV")
+    with tab6: kategori_sekmesi_olustur(sorgular["Üretici"], "Uretici")
