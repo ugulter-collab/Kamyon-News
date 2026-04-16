@@ -116,7 +116,7 @@ if st.session_state.page == 'details':
 # ==========================================
 else:
     st.markdown('<p class="kantan-title">TRUCKER<span>.NEWS</span></p>', unsafe_allow_html=True)
-    st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y %H:%M")} | MEKATRONİK SİSTEMLER VE 2030 STRATEJİSİ</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y %H:%M")} | AĞIR VASITA HABERLERİ</p>', unsafe_allow_html=True)
 
     tab_titles = ["🌟 Öne Çıkanlar", "🖥️ HMI", "📡 Connectivity", "🛡️ ADAS", "⚡ Electric", "🏭 OEM News"]
     tabs = st.tabs(tab_titles)
