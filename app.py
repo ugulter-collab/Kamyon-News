@@ -37,6 +37,19 @@ def get_database():
 # 3. GÖRSEL MOTORU (UNSPLASH KALDIRILDI, WIKIMEDIA EKLENDİ)
 # ==========================================
 @st.cache_data(ttl=900)
+def rss_resim_al(entry):
+    # media_content varsa
+    if "media_content" in entry:
+        return entry.media_content[0]["url"]
+
+    # summary içinde img varsa
+    if "summary" in entry:
+        soup = BeautifulSoup(entry.summary, "html.parser")
+        img = soup.find("img")
+        if img and img.get("src"):
+            return img["src"]
+
+    return None
 def resim_bul(google_news_url, baslik=""):
     yasakli_kelimeler = ['logo', 'icon', 'favicon', 'google', 'gstatic', 'avatar', 'news.google', 'blank']
     
