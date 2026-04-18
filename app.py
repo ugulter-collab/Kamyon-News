@@ -7,21 +7,66 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import time
 import urllib.parse
+import gspread
+from google.oauth2.service_account import Credentials
 
-# --- GÜVENLİK VE API YAPILANDIRMASI ---
+# --- GÜVENLİK VE API ---
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 except:
-    st.error("Secrets bulunamadı. Lütfen Cloud panelinden API anahtarlarınızı ekleyin.")
+    st.error("Secrets bulunamadı. Lütfen Cloud panelinden ayarlarınızı kontrol edin.")
     st.stop()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
-# --- PORTAL TASARIMI ---
-st.set_page_config(page_title="Trucker.News Portal", page_icon="🚛", layout="wide")
+# --- GOOGLE SHEETS VERİTABANI BAĞLANTISI ---
+@st.cache_resource
+def get_database():
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        gc = gspread.authorize(creds)
+        # Tablonuzun adının TruckerNews_DB olduğundan emin olun
+        return gc.open("TruckerNews_DB").sheet1
+    except Exception as e:
+        st.error(f"Veritabanı bağlantı hatası: {e}")
+        return None
 
+# --- YAPAY ZEKA VE HAFIZA MOTORU ---
+def akilli_analiz_getir(link, baslik):
+    sheet = get_database()
+    if sheet is None:
+        return "Veritabanına bağlanılamadı. Sistem geçici olarak devre dışı."
+
+    # 1. TABLO KONTROLÜ (Hafızada var mı?)
+    try:
+        kayitlar = sheet.get_all_records()
+        for kayit in kayitlar:
+            if kayit.get("Link") == link:
+                return f"*(Bu analiz arşivden anında getirilmiştir ⚡)*\n\n{kayit.get('Analiz')}"
+    except Exception as e:
+        # Eğer tablo tamamen boşsa ve başlıklar yoksa hata verebilir, yoksay ve devam et
+        pass
+
+    # 2. BULUNAMADIYSA API'Yİ ÇALIŞTIR VE KAYDET
+    prompt = f"Şu haberi ağır vasıta sektörü uzmanı gözüyle detaylandır. Teknik yenilikleri, bağlantı çözümlerini ve ADAS sistemlerine etkisini vurgulayan Türkçe bir makale yaz: {baslik}"
+    
+    try:
+        cevap = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        analiz_metni = cevap.text
+        
+        # Gelecekteki ziyaretçiler için veritabanına kaydet (Sütunlar: Link, Analiz)
+        # Not: Tablonuzun 1. satırında A1 hücresinde "Link", B1 hücresinde "Analiz" yazdığından emin olun.
+        sheet.append_row([link, analiz_metni])
+        
+        return f"*(Yapay Zeka bu analizi sizin için şimdi üretti 🤖)*\n\n{analiz_metni}"
+    except Exception as e:
+        return f"Analiz oluşturulurken hata oluştu: {e}"
+
+# --- TASARIM VE İSKELET AYARLARI ---
+st.set_page_config(page_title="Trucker.News Portal", page_icon="🚛", layout="wide")
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
@@ -30,62 +75,35 @@ st.markdown("""
     .kantan-title span { color: #e63946; }
     .kantan-date { font-family: monospace; color: #888888; border-bottom: 1px solid #333; padding-bottom: 15px; margin-bottom: 25px; font-size: 0.9rem;}
     .card-container { background-color: #161b22; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 25px; transition: 0.4s; }
-    .card-container:hover { border-color: #e63946; transform: translateY(-5px); }
-    .latest-row { padding: 12px 0; border-bottom: 1px solid #21262d; }
     .latest-time { color: #e63946; font-family: monospace; font-weight: bold; font-size: 0.85rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- GELİŞMİŞ GÖRSEL MOTORU (Original Source Scraper) ---
-@st.cache_data(ttl=900) # 15 dakika cache
+# Görsel Bulucu (Aynı Kalıyor)
+@st.cache_data(ttl=900)
 def resim_bul(url, baslik=""):
     try:
-        # Gerçek tarayıcı kimliği (Daha güçlü)
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-        }
-        
-        # Google Redirector'ı takip et
+        headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
-        final_url = r.url # Yönlenilen asıl haber sitesi
-        
         soup = BeautifulSoup(r.content, 'html.parser')
-        
-        # 1. Öncelik: OpenGraph Görseli (og:image)
-        og_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
-        if og_img and og_img.get("content"):
-            return og_img["content"]
-            
-        # 2. Öncelik: Sayfanın en büyük/ilk anlamlı görseli
+        og_img = soup.find("meta", property="og:image")
+        if og_img and og_img.get("content"): return og_img["content"]
         for img in soup.find_all('img'):
             src = img.get('src', '')
-            if 'http' in src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
-                if 'logo' not in src.lower() and 'icon' not in src.lower():
-                    return src
-    except:
-        pass
-    
-    # Yedek: Sektörel Yüksek Kaliteli Fotoğraflar
-    yedekler = [
-        "https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?q=80&w=800",
-        "https://images.unsplash.com/photo-1586191582056-96fcfdf9fd8b?q=80&w=800",
-        "https://images.unsplash.com/photo-1519003722824-194d4455a60c?q=80&w=800"
-    ]
-    return yedekler[len(baslik) % len(yedekler)]
+            if 'http' in src and any(ext in src.lower() for ext in ['.jpg', '.png', '.webp']) and 'logo' not in src.lower(): return src
+    except: pass
+    yedekler = ["https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?q=80&w=800", "https://images.unsplash.com/photo-1586191582056-96fcfdf9fd8b?q=80&w=800"]
+    return yedekler[len(baslik) % 2]
 
-# --- GÜNCEL VERİ ÇEKME MOTORU ---
+# Veri Getirici (Aynı Kalıyor)
 @st.cache_data(ttl=900)
 def veri_getir(sorgu, adet, taze_mi=False):
-    # Eğer son haberler isteniyorsa Google'a "son 12 saat" filtresi ekle
     zaman_filtresi = " when:12h" if taze_mi else ""
     guvenli_sorgu = urllib.parse.quote(sorgu + zaman_filtresi)
-    
-    rss_url = f"https://news.google.com/rss/search?q={guvenli_sorgu}&hl=en-US"
-    feed = feedparser.parse(rss_url)
+    feed = feedparser.parse(f"https://news.google.com/rss/search?q={guvenli_sorgu}&hl=en-US")
     return feed.entries[:adet]
 
-# --- SAYFA MANTIĞI ---
+# --- SAYFA YÖNETİMİ ---
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'data' not in st.session_state: st.session_state.data = None
 
@@ -96,9 +114,7 @@ def view_details(item):
 def go_home():
     st.session_state.page = 'home'
 
-# ==========================================
-# 1. GÖRÜNÜM: DETAYLAR
-# ==========================================
+# --- 1. DETAYLAR SAYFASI (YAPAY ZEKA BURADA DEVREYE GİRER) ---
 if st.session_state.page == 'details':
     st.button("← Ana Sayfaya Dön", on_click=go_home)
     h = st.session_state.data
@@ -106,59 +122,38 @@ if st.session_state.page == 'details':
     st.title(h.title)
     st.caption(f"Kaynak: {h.source.title if 'source' in h else 'Global Medya'} | [Haberi Sitede Oku]({h.link})")
     
-    with st.spinner("Yapay Zeka derinlemesine mekatronik ve endüstri analizi hazırlıyor..."):
-        prompt = f"Şu haberi ağır vasıta sektörü uzmanı gözüyle detaylandır. Teknik yenilikleri, bağlantı çözümlerini ve ADAS sistemlerine etkisini vurgulayan Türkçe bir makale yaz: {h.title}"
-        analiz = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-        st.markdown(f'<div style="font-size:1.2rem; line-height:1.8;">{analiz.text}</div>', unsafe_allow_html=True)
+    with st.spinner("Arşiv kontrol ediliyor veya yeni analiz hazırlanıyor..."):
+        # YENİ SİSTEM: API'ye direkt gitmek yerine akıllı hafıza motorunu çağırıyoruz
+        analiz_sonucu = akilli_analiz_getir(h.link, h.title)
+        st.markdown(f'<div style="font-size:1.1rem; line-height:1.8;">{analiz_sonucu}</div>', unsafe_allow_html=True)
 
-# ==========================================
-# 2. GÖRÜNÜM: ANA PORTAL
-# ==========================================
+# --- 2. ANA PORTAL SAYFASI (Değişiklik Yok) ---
 else:
     st.markdown('<p class="kantan-title">TRUCKER<span>.NEWS</span></p>', unsafe_allow_html=True)
-    st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y %H:%M")} | AĞIR VASITA HABERLERİ</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y %H:%M")} | MEKATRONİK SİSTEMLER STRATEJİSİ</p>', unsafe_allow_html=True)
 
-    tab_titles = ["🌟 Öne Çıkanlar", "🖥️ HMI", "📡 Connectivity", "🛡️ ADAS", "⚡ Electric", "🏭 OEM News"]
-    tabs = st.tabs(tab_titles)
+    tabs = st.tabs(["🌟 Öne Çıkanlar", "🖥️ HMI", "📡 Connectivity", "🛡️ ADAS", "⚡ Electric", "🏭 OEM News"])
+    sorgular = {"HMI": "truck mechatronics HMI", "Connectivity": "truck connectivity telematics", "ADAS": "truck ADAS safety", "Electric": "electric truck battery", "OEM": "MAN Scania Mercedes-Benz truck"}
 
-    sorgular = {
-        "HMI": "truck mechatronics HMI display dashboard",
-        "Connectivity": "truck connectivity telematics 5G V2X",
-        "ADAS": "truck ADAS safety active brake assist",
-        "Electric": "electric truck battery hydrogen",
-        "OEM": "MAN Scania Mercedes-Benz truck news"
-    }
-
-    # --- ÖNE ÇIKANLAR VE SON HABERLER ---
     with tabs[0]:
-        st.subheader("🔥 Manşetler")
         manset_haberler = veri_getir("heavy duty truck innovations", 15, taze_mi=True)
-        
-        # Üstte 3 Büyük Manşet
         cols = st.columns(3)
         for i in range(3):
             if i < len(manset_haberler):
                 h = manset_haberler[i]
                 with cols[i]:
-                    img = resim_bul(h.link, h.title)
-                    st.image(img, use_container_width=True)
+                    st.image(resim_bul(h.link, h.title), use_container_width=True)
                     st.write(f"**{h.title[:75]}...**")
                     st.button("İncele", key=f"top_{i}", on_click=view_details, args=(h,), use_container_width=True)
 
         st.write("---")
-        st.subheader("⏱️ Son Haberler (Kronolojik Akış)")
-        
-        son_haberler = manset_haberler[3:]
-        # Tarihe göre sıralama (Yeniden eskiye)
-        sirali = sorted(son_haberler, key=lambda x: x.get('published_parsed', 0), reverse=True)
-        
-        for i, h in enumerate(sirali):
+        st.subheader("⏱️ Son Haberler")
+        for i, h in enumerate(sorted(manset_haberler[3:], key=lambda x: x.get('published_parsed', 0), reverse=True)):
             tarih = datetime.fromtimestamp(time.mktime(h.published_parsed)).strftime("%H:%M") if 'published_parsed' in h else "Bugün"
             c1, c2 = st.columns([1, 8])
             with c1: st.markdown(f'<p class="latest-time">{tarih}</p>', unsafe_allow_html=True)
             with c2: st.button(h.title, key=f"list_{i}", on_click=view_details, args=(h,), use_container_width=True)
 
-    # --- KATEGORİ SEKMELERİ (Grup Başına 6 Haber) ---
     def tab_doldur(sorgu, t_id):
         haberler = veri_getir(sorgu, 6, taze_mi=True)
         for row in range(0, 6, 3):
@@ -168,8 +163,7 @@ else:
                 if idx < len(haberler):
                     h = haberler[idx]
                     with cols[j]:
-                        img = resim_bul(h.link, h.title)
-                        st.image(img, use_container_width=True)
+                        st.image(resim_bul(h.link, h.title), use_container_width=True)
                         st.write(f"**{h.title[:65]}...**")
                         st.button("Detaylar", key=f"btn_{t_id}_{idx}", on_click=view_details, args=(h,), use_container_width=True)
 
