@@ -50,41 +50,41 @@ def rss_resim_al(entry):
             return img["src"]
 
     return None
-def resim_bul(google_news_url, baslik=""):
-    yasakli_kelimeler = ['logo', 'icon', 'favicon', 'google', 'gstatic', 'avatar', 'news.google', 'blank']
-    
+def resim_bul(entry):
+    yasakli = ['logo','icon','favicon','google','gstatic','avatar','blank']
+
+    # 🟢 1. RSS'den çek
+    rss_img = rss_resim_al(entry)
+    if rss_img and not any(x in rss_img.lower() for x in yasakli):
+        return rss_img
+
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            "User-Agent": "Mozilla/5.0"
         }
-        
-        # 1. Google Yönlendirmesini Aş
-        ilk_istek = requests.get(google_news_url, headers=headers, timeout=5, allow_redirects=True)
-        gercek_url = ilk_istek.url
-        
-        if "google.com" in gercek_url:
-            soup_ilk = BeautifulSoup(ilk_istek.content, 'html.parser')
-            a_tag = soup_ilk.find('a', href=True)
-            if a_tag and 'http' in a_tag['href'] and 'accounts.google' not in a_tag['href']:
-                gercek_url = a_tag['href']
 
-        # 2. Gerçek Siteye Gir
-        if "google.com" not in gercek_url:
-            r = requests.get(gercek_url, headers=headers, timeout=8)
-            soup = BeautifulSoup(r.content, 'html.parser')
-            
-            resim_url = None
-            meta_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
-            if meta_img and meta_img.get("content"):
-                resim_url = meta_img["content"]
-                
-            if resim_url:
-                res_url_duzenli = urllib.parse.urljoin(gercek_url, resim_url)
-                if not any(x in res_url_duzenli.lower() for x in yasakli_kelimeler):
-                    return res_url_duzenli
+        r = requests.get(entry.link, headers=headers, timeout=8)
+        soup = BeautifulSoup(r.text, "html.parser")
 
-    except Exception:
+        # 🟢 2. OG image
+        for tag in [
+            {"property": "og:image"},
+            {"name": "twitter:image"},
+        ]:
+            meta = soup.find("meta", attrs=tag)
+            if meta and meta.get("content"):
+                return meta["content"]
+
+        # 🟢 3. sayfadaki ilk büyük img
+        for img in soup.find_all("img"):
+            src = img.get("src") or img.get("data-src")
+            if src and not any(x in src.lower() for x in yasakli):
+                return src
+
+    except:
         pass
+
+    return None
     
     # 3. YEDEKLER: WIKIPEDIA DOĞRULANMIŞ TIR GÖRSELLERİ (ASLA KÖPEK ÇIKMAZ)
     baslik_lower = baslik.lower()
