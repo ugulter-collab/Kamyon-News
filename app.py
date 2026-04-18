@@ -8,7 +8,6 @@ import time
 import urllib.parse
 import gspread
 from google.oauth2.service_account import Credentials
-import re
 
 # ==========================================
 # 1. GÜVENLİK VE API BAĞLANTILARI
@@ -35,7 +34,7 @@ def get_database():
         return None
 
 # ==========================================
-# 3. GERÇEK HABER GÖRSELİ ÇEKME MOTORU (LINK ÇÖZÜCÜ EKLENDİ)
+# 3. GÖRSEL MOTORU (UNSPLASH KALDIRILDI, WIKIMEDIA EKLENDİ)
 # ==========================================
 @st.cache_data(ttl=900)
 def resim_bul(google_news_url, baslik=""):
@@ -44,56 +43,50 @@ def resim_bul(google_news_url, baslik=""):
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
         }
         
-        # ADIM 1: GOOGLE YÖNLENDİRMESİNİ AŞIP GERÇEK SİTEYİ BULMAK
+        # 1. Google Yönlendirmesini Aş
         ilk_istek = requests.get(google_news_url, headers=headers, timeout=5, allow_redirects=True)
         gercek_url = ilk_istek.url
         
-        # Eğer hala Google domaini içindeysek, sayfanın içindeki asıl haber linkini kazı
         if "google.com" in gercek_url:
             soup_ilk = BeautifulSoup(ilk_istek.content, 'html.parser')
             a_tag = soup_ilk.find('a', href=True)
             if a_tag and 'http' in a_tag['href'] and 'accounts.google' not in a_tag['href']:
                 gercek_url = a_tag['href']
 
-        # ADIM 2: GERÇEK HABER SİTESİNE GİRİP RESMİ ÇEKMEK
-        r = requests.get(gercek_url, headers=headers, timeout=8)
-        soup = BeautifulSoup(r.content, 'html.parser')
-        
-        resim_url = None
-        
-        # Öncelik 1: Sitenin belirlediği ana kapak fotoğrafı (og:image veya twitter:image)
-        meta_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
-        if meta_img and meta_img.get("content"):
-            resim_url = meta_img["content"]
+        # 2. Gerçek Siteye Gir
+        if "google.com" not in gercek_url:
+            r = requests.get(gercek_url, headers=headers, timeout=8)
+            soup = BeautifulSoup(r.content, 'html.parser')
             
-        # Öncelik 2: Eğer meta etiket yoksa, haber metni (<article>) içindeki ilk büyük resmi al
-        if not resim_url:
-            article = soup.find('article')
-            if article:
-                img = article.find('img')
-                if img:
-                    resim_url = img.get('src') or img.get('data-src')
-
-        # Bulunan resim linkini düzelt ve doğrula
-        if resim_url:
-            res_url_duzenli = urllib.parse.urljoin(gercek_url, resim_url)
-            if not any(x in res_url_duzenli.lower() for x in yasakli_kelimeler):
-                return res_url_duzenli
+            resim_url = None
+            meta_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
+            if meta_img and meta_img.get("content"):
+                resim_url = meta_img["content"]
+                
+            if resim_url:
+                res_url_duzenli = urllib.parse.urljoin(gercek_url, resim_url)
+                if not any(x in res_url_duzenli.lower() for x in yasakli_kelimeler):
+                    return res_url_duzenli
 
     except Exception:
         pass
     
-    # ADIM 3: GERÇEK RESİM BULUNAMAZSA KULLANILACAK SABİT YEDEK RESİMLER
+    # 3. YEDEKLER: WIKIPEDIA DOĞRULANMIŞ TIR GÖRSELLERİ (ASLA KÖPEK ÇIKMAZ)
     baslik_lower = baslik.lower()
-    if "volvo" in baslik_lower: return "https://images.unsplash.com/photo-1605353597446-51201ebcdb1b?q=80&w=800"
-    elif "scania" in baslik_lower: return "https://images.unsplash.com/photo-1590848039265-02b7e1919299?q=80&w=800"
-    elif "mercedes" in baslik_lower: return "https://images.unsplash.com/photo-1616431169599-606d2b388274?q=80&w=800"
-    elif "freightliner" in baslik_lower: return "https://images.unsplash.com/photo-1586191582056-96fcfdf9fd8b?q=80&w=800"
-    elif "bharat" in baslik_lower: return "https://images.unsplash.com/photo-1519003722824-194d4455a60c?q=80&w=800"
-    else: return "https://images.unsplash.com/photo-1591768575198-88dac53fbd0a?q=80&w=800"
+    if "volvo" in baslik_lower: 
+        return "https://upload.wikimedia.org/wikipedia/commons/thumb/7/77/Volvo_FH_500.jpg/800px-Volvo_FH_500.jpg"
+    elif "scania" in baslik_lower: 
+        return "https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/Scania_R500_V8.jpg/800px-Scania_R500_V8.jpg"
+    elif "mercedes" in baslik_lower or "actros" in baslik_lower: 
+        return "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/Mercedes-Benz_Actros_1845.jpg/800px-Mercedes-Benz_Actros_1845.jpg"
+    elif "freightliner" in baslik_lower: 
+        return "https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Freightliner_Cascadia_Evolution.jpg/800px-Freightliner_Cascadia_Evolution.jpg"
+    elif "bharat" in baslik_lower or "tata" in baslik_lower: 
+        return "https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/Tata_Prima_4928_S.jpg/800px-Tata_Prima_4928_S.jpg"
+    else: 
+        return "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/MAN_TGX_18.440_XXL.jpg/800px-MAN_TGX_18.440_XXL.jpg"
 
 # ==========================================
 # 4. VERİ GETİRME VE ANALİZ FONKSİYONLARI
