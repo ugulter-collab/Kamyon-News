@@ -10,7 +10,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ==========================================
-# 1. GÜVENLİK VE API BAĞLANTILARI
+# GÜVENLİK VE API BAĞLANTILARI
 # ==========================================
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -20,10 +20,7 @@ except:
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# ==========================================
-# 2. VERİTABANI VE MOTOR FONKSİYONLARI
-# ==========================================
-
+# --- GOOGLE SHEETS (AKILLI HAFIZA) ---
 @st.cache_resource
 def get_database():
     try:
@@ -34,16 +31,18 @@ def get_database():
     except Exception as e:
         return None
 
-# GÜNCELLENMİŞ VE KATI FİLTRELİ GÖRSEL MOTORU
+# ==========================================
+# AKILLI VE GÜÇLÜ GÖRSEL BULUCU (Anti-Bot Aşılır)
+# ==========================================
 @st.cache_data(ttl=900)
 def resim_bul(url, baslik=""):
-    # GE Logolarını, ikonları ve avatarları kesinlikle yasaklayan liste
     yasakli_kelimeler = ['logo', 'icon', 'favicon', 'google', 'gstatic', 'avatar', 'news.google']
     
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Referer': 'https://news.google.com/'
         }
         r = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
         final_url = r.url
@@ -53,11 +52,10 @@ def resim_bul(url, baslik=""):
         meta_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"}) or soup.find("meta", itemprop="image")
         if meta_img and meta_img.get("content"):
             res_url = urllib.parse.urljoin(final_url, meta_img["content"])
-            # Eğer resim linki yasaklı kelimelerden hiçbirini İÇERMİYORSA kabul et
             if not any(x in res_url.lower() for x in yasakli_kelimeler):
                 return res_url
                 
-        # 2. Aşama: Sayfa içi img etiketleri
+        # 2. Aşama: Sayfa içindeki resim etiketlerini tara
         for img in soup.find_all('img'):
             src = img.get('src', '') or img.get('data-src', '')
             if src:
@@ -81,7 +79,6 @@ def resim_bul(url, baslik=""):
     elif "bharat" in baslik_lower or "tata" in baslik_lower:
         return "https://images.unsplash.com/photo-1519003722824-194d4455a60c?q=80&w=800"
     else:
-        # Genel premium tır görselleri
         yedekler = [
             "https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?q=80&w=800",
             "https://images.unsplash.com/photo-1591768575198-88dac53fbd0a?q=80&w=800"
@@ -96,6 +93,9 @@ def veri_getir(sorgu, adet, taze_mi=True):
     feed = feedparser.parse(rss_url)
     return feed.entries[:adet]
 
+# ==========================================
+# YAPAY ZEKA MÜŞTERİ VE PİYASA ANALİSTİ
+# ==========================================
 def akilli_analiz_getir(link, baslik):
     sheet = get_database()
     if sheet is not None:
@@ -124,7 +124,7 @@ def akilli_analiz_getir(link, baslik):
         return f"Analiz oluşturulurken hata oluştu."
 
 # ==========================================
-# 3. İSKELET VE TASARIM (KANTAN STYLE)
+# İSKELET VE TASARIM (ORTALANMIŞ OKUNABİLİR GENİŞLİK)
 # ==========================================
 st.set_page_config(page_title="Trucker.Markets", page_icon="🚛", layout="wide", initial_sidebar_state="collapsed")
 
@@ -133,7 +133,11 @@ st.markdown("""
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     body { background-color: #0e1117; }
     
-    .block-container { max-width: 1100px; margin: 0 auto; padding-top: 2rem; }
+    .block-container {
+        max-width: 1100px; 
+        margin: 0 auto;
+        padding-top: 2rem;
+    }
     
     .kantan-title { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; font-weight: 900; color: #ffffff; letter-spacing: -1px; margin-bottom: 0px;}
     .kantan-title span { color: #e63946; }
@@ -151,7 +155,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 4. SAYFA YÖNETİMİ
+# SAYFA YÖNETİMİ
 # ==========================================
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'data' not in st.session_state: st.session_state.data = None
@@ -164,7 +168,7 @@ def go_home():
     st.session_state.page = 'home'
 
 # ==========================================
-# 5. EKRANLAR (VİTRİN VE DETAY)
+# EKRAN 1: RAPOR OKUMA EKRANI (DETAY)
 # ==========================================
 if st.session_state.page == 'details':
     st.button("← Geri Dön", on_click=go_home)
@@ -182,6 +186,51 @@ if st.session_state.page == 'details':
         analiz_sonucu = akilli_analiz_getir(h.link, h.title)
         st.markdown(f'<div style="font-size:1.15rem; line-height:1.8; color:#e0e0e0; padding: 0 10px;">{analiz_sonucu}</div>', unsafe_allow_html=True)
 
+# ==========================================
+# EKRAN 2: BOL SEÇENEKLİ PİYASA VİTRİNİ
+# ==========================================
 else:
     st.markdown('<p class="kantan-title">TRUCKER<span>.MARKETS</span></p>', unsafe_allow_html=True)
-    st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y")} | MARKALAR,
+    st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y")} | MARKALAR, YENİLİKLER VE MÜŞTERİ GERİ BİLDİRİMLERİ</p>', unsafe_allow_html=True)
+
+    tabs = st.tabs(["🌟 Piyasaya Bakış", "🇸🇪 Volvo & Scania", "🇩🇪 Mercedes-Benz", "🇺🇸 Freightliner", "🇮🇳 BharatBenz", "🌐 Yeni Oyuncular"])
+    
+    sorgular = {
+        "Piyasa": "heavy duty trucks new models OR customer feedback report",
+        "VolvoScania": "Volvo trucks customer review OR Scania trucks new features",
+        "Mercedes": "Mercedes-Benz Actros feedback OR Mercedes trucks innovations",
+        "Freightliner": "Freightliner cascadia reviews OR Freightliner new truck market",
+        "BharatBenz": "BharatBenz trucks performance OR BharatBenz market report",
+        "YeniOyuncular": "new heavy truck brands OR electric truck market feedback"
+    }
+
+    def tab_doldur(sorgu, t_id, adet=9):
+        with st.spinner("Piyasa verileri toplanıyor..."):
+            haberler = veri_getir(sorgu, adet, taze_mi=True)
+            if not haberler:
+                st.info("Bu marka için son günlerde yeni bir rapor bulunamadı.")
+                return
+                
+            for row in range(0, adet, 3):
+                cols = st.columns(3)
+                for j in range(3):
+                    idx = row + j
+                    if idx < len(haberler):
+                        h = haberler[idx]
+                        with cols[j]:
+                            img_url = resim_bul(h.link, h.title)
+                            st.markdown(f"""
+                            <div class="card-container">
+                                <img src="{img_url}" class="card-img">
+                                <div class="card-title">{h.title[:80]}...</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            st.button("Raporu Oku", key=f"btn_{t_id}_{idx}", on_click=view_details, args=(h,), use_container_width=True)
+
+    with tabs[0]: tab_doldur(sorgular["Piyasa"], "piyasa", 12)
+    with tabs[1]: tab_doldur(sorgular["VolvoScania"], "vs")
+    with tabs[2]: tab_doldur(sorgular["Mercedes"], "merc")
+    with tabs[3]: tab_doldur(sorgular["Freightliner"], "freight")
+    with tabs[4]: tab_doldur(sorgular["BharatBenz"], "bharat")
+    with tabs[5]: tab_doldur(sorgular["YeniOyuncular"], "yeni")
