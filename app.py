@@ -8,9 +8,10 @@ import time
 import urllib.parse
 import gspread
 from google.oauth2.service_account import Credentials
+import re
 
 # ==========================================
-# GÜVENLİK VE API BAĞLANTILARI
+# 1. GÜVENLİK VE API BAĞLANTILARI
 # ==========================================
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -20,7 +21,9 @@ except:
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- GOOGLE SHEETS (AKILLI HAFIZA) ---
+# ==========================================
+# 2. VERİTABANI BAĞLANTISI
+# ==========================================
 @st.cache_resource
 def get_database():
     try:
@@ -32,59 +35,69 @@ def get_database():
         return None
 
 # ==========================================
-# AKILLI VE GÜÇLÜ GÖRSEL BULUCU (Anti-Bot Aşılır)
+# 3. GERÇEK HABER GÖRSELİ ÇEKME MOTORU (LINK ÇÖZÜCÜ EKLENDİ)
 # ==========================================
 @st.cache_data(ttl=900)
-def resim_bul(url, baslik=""):
-    yasakli_kelimeler = ['logo', 'icon', 'favicon', 'google', 'gstatic', 'avatar', 'news.google']
+def resim_bul(google_news_url, baslik=""):
+    yasakli_kelimeler = ['logo', 'icon', 'favicon', 'google', 'gstatic', 'avatar', 'news.google', 'blank']
     
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Referer': 'https://news.google.com/'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
         }
-        r = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
-        final_url = r.url
+        
+        # ADIM 1: GOOGLE YÖNLENDİRMESİNİ AŞIP GERÇEK SİTEYİ BULMAK
+        ilk_istek = requests.get(google_news_url, headers=headers, timeout=5, allow_redirects=True)
+        gercek_url = ilk_istek.url
+        
+        # Eğer hala Google domaini içindeysek, sayfanın içindeki asıl haber linkini kazı
+        if "google.com" in gercek_url:
+            soup_ilk = BeautifulSoup(ilk_istek.content, 'html.parser')
+            a_tag = soup_ilk.find('a', href=True)
+            if a_tag and 'http' in a_tag['href'] and 'accounts.google' not in a_tag['href']:
+                gercek_url = a_tag['href']
+
+        # ADIM 2: GERÇEK HABER SİTESİNE GİRİP RESMİ ÇEKMEK
+        r = requests.get(gercek_url, headers=headers, timeout=8)
         soup = BeautifulSoup(r.content, 'html.parser')
         
-        # 1. Aşama: Sosyal Medya OG Etiketleri
-        meta_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"}) or soup.find("meta", itemprop="image")
+        resim_url = None
+        
+        # Öncelik 1: Sitenin belirlediği ana kapak fotoğrafı (og:image veya twitter:image)
+        meta_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
         if meta_img and meta_img.get("content"):
-            res_url = urllib.parse.urljoin(final_url, meta_img["content"])
-            if not any(x in res_url.lower() for x in yasakli_kelimeler):
-                return res_url
-                
-        # 2. Aşama: Sayfa içindeki resim etiketlerini tara
-        for img in soup.find_all('img'):
-            src = img.get('src', '') or img.get('data-src', '')
-            if src:
-                tam_link = urllib.parse.urljoin(final_url, src)
-                if any(ext in tam_link.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
-                    if not any(x in tam_link.lower() for x in yasakli_kelimeler):
-                        return tam_link
-    except:
+            resim_url = meta_img["content"]
+            
+        # Öncelik 2: Eğer meta etiket yoksa, haber metni (<article>) içindeki ilk büyük resmi al
+        if not resim_url:
+            article = soup.find('article')
+            if article:
+                img = article.find('img')
+                if img:
+                    resim_url = img.get('src') or img.get('data-src')
+
+        # Bulunan resim linkini düzelt ve doğrula
+        if resim_url:
+            res_url_duzenli = urllib.parse.urljoin(gercek_url, resim_url)
+            if not any(x in res_url_duzenli.lower() for x in yasakli_kelimeler):
+                return res_url_duzenli
+
+    except Exception:
         pass
     
-    # 3. Aşama: KURTARICI MARKA RESİMLERİ (Sıfır Köpek, Sıfır Logo)
+    # ADIM 3: GERÇEK RESİM BULUNAMAZSA KULLANILACAK SABİT YEDEK RESİMLER
     baslik_lower = baslik.lower()
-    if "volvo" in baslik_lower:
-        return "https://images.unsplash.com/photo-1605353597446-51201ebcdb1b?q=80&w=800"
-    elif "scania" in baslik_lower:
-        return "https://images.unsplash.com/photo-1590848039265-02b7e1919299?q=80&w=800"
-    elif "mercedes" in baslik_lower:
-        return "https://images.unsplash.com/photo-1616431169599-606d2b388274?q=80&w=800"
-    elif "freightliner" in baslik_lower or "american" in baslik_lower:
-        return "https://images.unsplash.com/photo-1586191582056-96fcfdf9fd8b?q=80&w=800"
-    elif "bharat" in baslik_lower or "tata" in baslik_lower:
-        return "https://images.unsplash.com/photo-1519003722824-194d4455a60c?q=80&w=800"
-    else:
-        yedekler = [
-            "https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?q=80&w=800",
-            "https://images.unsplash.com/photo-1591768575198-88dac53fbd0a?q=80&w=800"
-        ]
-        return yedekler[len(baslik) % len(yedekler)]
+    if "volvo" in baslik_lower: return "https://images.unsplash.com/photo-1605353597446-51201ebcdb1b?q=80&w=800"
+    elif "scania" in baslik_lower: return "https://images.unsplash.com/photo-1590848039265-02b7e1919299?q=80&w=800"
+    elif "mercedes" in baslik_lower: return "https://images.unsplash.com/photo-1616431169599-606d2b388274?q=80&w=800"
+    elif "freightliner" in baslik_lower: return "https://images.unsplash.com/photo-1586191582056-96fcfdf9fd8b?q=80&w=800"
+    elif "bharat" in baslik_lower: return "https://images.unsplash.com/photo-1519003722824-194d4455a60c?q=80&w=800"
+    else: return "https://images.unsplash.com/photo-1591768575198-88dac53fbd0a?q=80&w=800"
 
+# ==========================================
+# 4. VERİ GETİRME VE ANALİZ FONKSİYONLARI
+# ==========================================
 @st.cache_data(ttl=900)
 def veri_getir(sorgu, adet, taze_mi=True):
     zaman_filtresi = " when:3d"
@@ -93,9 +106,6 @@ def veri_getir(sorgu, adet, taze_mi=True):
     feed = feedparser.parse(rss_url)
     return feed.entries[:adet]
 
-# ==========================================
-# YAPAY ZEKA MÜŞTERİ VE PİYASA ANALİSTİ
-# ==========================================
 def akilli_analiz_getir(link, baslik):
     sheet = get_database()
     if sheet is not None:
@@ -106,13 +116,13 @@ def akilli_analiz_getir(link, baslik):
         except: pass
 
     prompt = f"""
-    Sen ticari araç sektöründe (Heavy Duty Trucks) çalışan bir Piyasa Araştırmacısı ve Müşteri Analistisin.
+    Sen ticari araç sektöründe çalışan bir Piyasa Araştırmacısı ve Müşteri Analistisin.
     Şu haberi oku ve okuması çok kolay, net bir Türkçe piyasa raporu yaz: {baslik}
     
     Kurallar:
-    1. Çok teknik mühendislik detaylarına boğma. Yenilik nedir ve müşteriye faydası nedir? Buna odaklan.
-    2. Eğer haberde bir markanın (Volvo, Scania, Mercedes vb.) yeni ürünü varsa, bunun pazardaki etkisini yorumla.
-    3. Yazı ortalanmış, ferah ve okuması kolay olsun. Kısa paragraflar kullan.
+    1. Çok teknik detaylara boğma. Yenilik nedir ve müşteriye faydası nedir? Buna odaklan.
+    2. Markanın pazardaki etkisini yorumla.
+    3. Yazı ferah ve okuması kolay olsun. Kısa paragraflar kullan.
     4. Sonuna "Piyasa ve Müşteri Etkisi" başlıklı 2 maddelik özet ekle.
     """
     try:
@@ -124,7 +134,7 @@ def akilli_analiz_getir(link, baslik):
         return f"Analiz oluşturulurken hata oluştu."
 
 # ==========================================
-# İSKELET VE TASARIM (ORTALANMIŞ OKUNABİLİR GENİŞLİK)
+# 5. İSKELET VE TASARIM
 # ==========================================
 st.set_page_config(page_title="Trucker.Markets", page_icon="🚛", layout="wide", initial_sidebar_state="collapsed")
 
@@ -133,11 +143,7 @@ st.markdown("""
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     body { background-color: #0e1117; }
     
-    .block-container {
-        max-width: 1100px; 
-        margin: 0 auto;
-        padding-top: 2rem;
-    }
+    .block-container { max-width: 1100px; margin: 0 auto; padding-top: 2rem; }
     
     .kantan-title { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; font-weight: 900; color: #ffffff; letter-spacing: -1px; margin-bottom: 0px;}
     .kantan-title span { color: #e63946; }
@@ -145,7 +151,7 @@ st.markdown("""
     
     .card-container { background-color: #161b22; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 15px; padding-bottom: 10px; transition: 0.3s;}
     .card-container:hover { border-color: #e63946; transform: translateY(-3px); }
-    .card-img { width: 100%; height: 180px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;}
+    .card-img { width: 100%; height: 180px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px; background-color: #0e1117;}
     .card-title { font-size: 1rem; font-weight: bold; color: #e0e0e0; line-height: 1.3; margin-bottom: 15px; padding: 0 10px; height: 60px; overflow: hidden;}
     
     .stTabs [data-baseweb="tab-list"] { gap: 8px; border-bottom: 2px solid #30363d;}
@@ -155,7 +161,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# SAYFA YÖNETİMİ
+# 6. SAYFA YÖNETİMİ VE EKRANLAR
 # ==========================================
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'data' not in st.session_state: st.session_state.data = None
@@ -167,9 +173,6 @@ def view_details(item):
 def go_home():
     st.session_state.page = 'home'
 
-# ==========================================
-# EKRAN 1: RAPOR OKUMA EKRANI (DETAY)
-# ==========================================
 if st.session_state.page == 'details':
     st.button("← Geri Dön", on_click=go_home)
     h = st.session_state.data
@@ -186,9 +189,6 @@ if st.session_state.page == 'details':
         analiz_sonucu = akilli_analiz_getir(h.link, h.title)
         st.markdown(f'<div style="font-size:1.15rem; line-height:1.8; color:#e0e0e0; padding: 0 10px;">{analiz_sonucu}</div>', unsafe_allow_html=True)
 
-# ==========================================
-# EKRAN 2: BOL SEÇENEKLİ PİYASA VİTRİNİ
-# ==========================================
 else:
     st.markdown('<p class="kantan-title">TRUCKER<span>.MARKETS</span></p>', unsafe_allow_html=True)
     st.markdown(f'<p class="kantan-date">{datetime.now().strftime("%d %B %Y")} | MARKALAR, YENİLİKLER VE MÜŞTERİ GERİ BİLDİRİMLERİ</p>', unsafe_allow_html=True)
