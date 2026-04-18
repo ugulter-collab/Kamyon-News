@@ -32,47 +32,56 @@ def get_database():
         return None
 
 # ==========================================
-# AKILLI GÖRSEL BULUCU (MARKAYA DUYARLI)
+# AKILLI VE GÜÇLÜ GÖRSEL BULUCU (Anti-Bot Aşılır)
 # ==========================================
 @st.cache_data(ttl=900)
 def resim_bul(url, baslik=""):
-    # 1. Deneme: Gerçek Haberin Sitesinden Resmi Çekmeye Çalış
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        r = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
+        # Daha güçlü bir tarayıcı kimliği (Bot engellerini aşmak için)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Referer': 'https://news.google.com/'
+        }
+        r = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
+        final_url = r.url
         soup = BeautifulSoup(r.content, 'html.parser')
         
-        og_img = soup.find("meta", property="og:image")
-        resim_url = og_img["content"] if og_img and og_img.get("content") else None
-        
-        if resim_url and not any(x in resim_url.lower() for x in ['google', 'gstatic', 'logo', 'icon', 'favicon']):
-            return resim_url
+        # 1. Aşama: Sosyal Medya Önizleme Etiketleri (En yüksek kalite buradadır)
+        meta_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"}) or soup.find("meta", itemprop="image")
+        if meta_img and meta_img.get("content"):
+            res_url = meta_img["content"]
+            res_url = urllib.parse.urljoin(final_url, res_url) # Yarım linkleri düzeltir
+            if not any(x in res_url.lower() for x in ['logo', 'icon', 'favicon']):
+                return res_url
+                
+        # 2. Aşama: Sayfa içindeki resim etiketlerini tara (Lazy loading dahil)
+        for img in soup.find_all('img'):
+            src = img.get('src', '') or img.get('data-src', '') # Tembe yüklenen resimleri de yakala
+            if src:
+                tam_link = urllib.parse.urljoin(final_url, src)
+                if any(ext in tam_link.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+                    if 'logo' not in tam_link.lower() and 'icon' not in tam_link.lower():
+                        return tam_link
     except:
         pass
     
-    # 2. Kurtarıcı Plan: Haber çekilemezse, haberi başlığına göre marka resmiyle eşleştir
+    # 3. Aşama: SIFIR KÖPEK POLİTİKASI (Sabit ve Garantili Tır Resimleri)
     baslik_lower = baslik.lower()
     if "volvo" in baslik_lower:
-        return "https://images.unsplash.com/photo-1605353597446-51201ebcdb1b?q=80&w=800" # Volvo tarzı
+        return "https://images.unsplash.com/photo-1605353597446-51201ebcdb1b?q=80&w=800"
     elif "scania" in baslik_lower:
-        return "https://images.unsplash.com/photo-1590848039265-02b7e1919299?q=80&w=800" # Scania tarzı
+        return "https://images.unsplash.com/photo-1590848039265-02b7e1919299?q=80&w=800"
     elif "mercedes" in baslik_lower:
-        return "https://images.unsplash.com/photo-1616431169599-606d2b388274?q=80&w=800" # Mercedes tarzı
+        return "https://images.unsplash.com/photo-1616431169599-606d2b388274?q=80&w=800"
     elif "freightliner" in baslik_lower or "american" in baslik_lower:
-        return "https://images.unsplash.com/photo-1586191582056-96fcfdf9fd8b?q=80&w=800" # Amerikan tarzı
-    elif "bharat" in baslik_lower or "tata" in baslik_lower or "india" in baslik_lower:
-        return "https://images.unsplash.com/photo-1519003722824-194d4455a60c?q=80&w=800" # Gelişen pazar tarzı
+        return "https://images.unsplash.com/photo-1586191582056-96fcfdf9fd8b?q=80&w=800"
     else:
-        # Karışık jenerik tır resimleri
-        yedekler = [
-            "https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?q=80&w=800",
-            "https://images.unsplash.com/photo-1591768575198-88dac53fbd0a?q=80&w=800"
-        ]
-        return yedekler[len(baslik) % len(yedekler)]
+        return "https://images.unsplash.com/photo-1519003722824-194d4455a60c?q=80&w=800"
 
 @st.cache_data(ttl=900)
 def veri_getir(sorgu, adet, taze_mi=True):
-    zaman_filtresi = " when:3d" # Daha fazla seçenek çıkması için son 3 günlük haberlere bakıyoruz
+    zaman_filtresi = " when:3d"
     guvenli_sorgu = urllib.parse.quote(sorgu + zaman_filtresi)
     rss_url = f"https://news.google.com/rss/search?q={guvenli_sorgu}&hl=en-US"
     feed = feedparser.parse(rss_url)
@@ -90,7 +99,6 @@ def akilli_analiz_getir(link, baslik):
                     return f"*(Bu piyasa raporu arşivden getirilmiştir ⚡)*\n\n{kayit.get('Analiz')}"
         except: pass
 
-    # Yapay Zeka Karakteri Değiştirildi: Artık bir Piyasa ve Müşteri Raporu Uzmanı
     prompt = f"""
     Sen ticari araç sektöründe (Heavy Duty Trucks) çalışan bir Piyasa Araştırmacısı ve Müşteri Analistisin.
     Şu haberi oku ve okuması çok kolay, net bir Türkçe piyasa raporu yaz: {baslik}
@@ -114,13 +122,11 @@ def akilli_analiz_getir(link, baslik):
 # ==========================================
 st.set_page_config(page_title="Trucker.News Piyasalar", page_icon="🚛", layout="wide", initial_sidebar_state="collapsed")
 
-# CSS KORSESİ: Sayfa "wide" olsa bile içerik ortada 1100px içine hapsedilir.
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     body { background-color: #0e1117; }
     
-    /* İÇERİĞİ EKRANIN ORTASINDA SABİTLE (Okunabilirliği Artırır) */
     .block-container {
         max-width: 1100px; 
         margin: 0 auto;
@@ -131,8 +137,8 @@ st.markdown("""
     .kantan-title span { color: #e63946; }
     .kantan-date { font-family: monospace; color: #888888; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 25px; font-size: 0.9rem;}
     
-    /* KART TASARIMI */
-    .card-container { background-color: #161b22; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 15px; padding-bottom: 10px;}
+    .card-container { background-color: #161b22; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 15px; padding-bottom: 10px; transition: 0.3s;}
+    .card-container:hover { border-color: #e63946; transform: translateY(-3px); }
     .card-img { width: 100%; height: 180px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;}
     .card-title { font-size: 1rem; font-weight: bold; color: #e0e0e0; line-height: 1.3; margin-bottom: 15px; padding: 0 10px; height: 60px; overflow: hidden;}
     
@@ -162,14 +168,18 @@ if st.session_state.page == 'details':
     st.button("← Geri Dön", on_click=go_home)
     h = st.session_state.data
     st.write("---")
+    
+    # 🔴 YENİ: HABERİN RESMİNİ DETAY SAYFASINDA DA GÖSTERİYORUZ
+    detay_resim_url = resim_bul(h.link, h.title)
+    st.image(detay_resim_url, use_container_width=True)
+    
     st.title(h.title)
     kaynak = h.source.title if hasattr(h, 'source') and hasattr(h.source, 'title') else 'Global Medya'
     st.caption(f"Kaynak: {kaynak} | [Haberin Orijinaline Git]({h.link})")
     
     with st.spinner("Piyasa raporu hazırlanıyor..."):
         analiz_sonucu = akilli_analiz_getir(h.link, h.title)
-        # Metnin çok geniş olmaması için özel margin
-        st.markdown(f'<div style="font-size:1.15rem; line-height:1.8; color:#e0e0e0; padding: 0 20px;">{analiz_sonucu}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:1.15rem; line-height:1.8; color:#e0e0e0; padding: 0 10px;">{analiz_sonucu}</div>', unsafe_allow_html=True)
 
 # ==========================================
 # EKRAN 2: BOL SEÇENEKLİ PİYASA VİTRİNİ
@@ -180,7 +190,6 @@ else:
 
     tabs = st.tabs(["🌟 Piyasaya Bakış", "🇸🇪 Volvo & Scania", "🇩🇪 Mercedes-Benz", "🇺🇸 Freightliner", "🇮🇳 BharatBenz", "🌐 Yeni Oyuncular"])
     
-    # MÜŞTERİ VE MARKA ODAKLI SORGULAR
     sorgular = {
         "Piyasa": "heavy duty trucks new models OR customer feedback report",
         "VolvoScania": "Volvo trucks customer review OR Scania trucks new features",
@@ -190,7 +199,6 @@ else:
         "YeniOyuncular": "new heavy truck brands OR electric truck market feedback"
     }
 
-    # SEKMELERİ DOLDURAN FONKSİYON (HER SEKME İÇİN 9 HABER)
     def tab_doldur(sorgu, t_id, adet=9):
         with st.spinner("Piyasa verileri toplanıyor..."):
             haberler = veri_getir(sorgu, adet, taze_mi=True)
@@ -205,7 +213,6 @@ else:
                     if idx < len(haberler):
                         h = haberler[idx]
                         with cols[j]:
-                            # Özel HTML Kart Tasarımı
                             img_url = resim_bul(h.link, h.title)
                             st.markdown(f"""
                             <div class="card-container">
@@ -216,7 +223,7 @@ else:
                             
                             st.button("Raporu Oku", key=f"btn_{t_id}_{idx}", on_click=view_details, args=(h,), use_container_width=True)
 
-    with tabs[0]: tab_doldur(sorgular["Piyasa"], "piyasa", 12) # Ana sayfa için 12 haber
+    with tabs[0]: tab_doldur(sorgular["Piyasa"], "piyasa", 12)
     with tabs[1]: tab_doldur(sorgular["VolvoScania"], "vs")
     with tabs[2]: tab_doldur(sorgular["Mercedes"], "merc")
     with tabs[3]: tab_doldur(sorgular["Freightliner"], "freight")
