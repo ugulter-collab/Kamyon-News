@@ -32,7 +32,7 @@ def get_database():
 sheet = get_database()
 
 # ==========================================
-# 2. RAM HAFIZASI (VERİTABANINI TEK SEFERDE OKU)
+# 2. RAM HAFIZASI
 # ==========================================
 if 'mevcut_raporlar' not in st.session_state:
     st.session_state.mevcut_raporlar = {}
@@ -43,7 +43,24 @@ if 'mevcut_raporlar' not in st.session_state:
         except: pass
 
 # ==========================================
-# 3. GELİŞMİŞ GÖRSEL BULUCU
+# 3. YENİ: TOPLU BAŞLIK ÇEVİRİ MOTORU (ANA SAYFA İÇİN)
+# ==========================================
+@st.cache_data(ttl=900)
+def basliklari_cevir(baslik_listesi):
+    if not baslik_listesi: return []
+    prompt = "Aşağıdaki İngilizce haber başlıklarını sırasını bozmadan Türkçeye çevir. Her satıra sadece çeviri metnini yaz, madde işareti veya numara kullanma:\n" + "\n".join(baslik_listesi)
+    try:
+        cevap = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        ceviriler = [b.strip().strip('-*1234567890. ') for b in cevap.text.strip().split('\n') if b.strip()]
+        # Hata kontrolü: Çeviri sayısı eşleşiyorsa kullan, yoksa orijinali ver
+        if len(ceviriler) == len(baslik_listesi):
+            return ceviriler
+        return baslik_listesi
+    except:
+        return baslik_listesi
+
+# ==========================================
+# 4. GELİŞMİŞ GÖRSEL BULUCU
 # ==========================================
 @st.cache_data(ttl=900)
 def resim_bul(google_news_url, baslik=""):
@@ -76,22 +93,23 @@ def resim_bul(google_news_url, baslik=""):
     return "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/MAN_TGX_18.440_XXL.jpg/800px-MAN_TGX_18.440_XXL.jpg"
 
 # ==========================================
-# 4. YAPAY ZEKA MOTORU
+# 5. YORUMSUZ ÇEVİRİ MOTORU (YAPAY ZEKA)
 # ==========================================
-def rapor_hazirla(link, baslik):
+def ceviri_hazirla(link, baslik):
     if link in st.session_state.mevcut_raporlar:
         return st.session_state.mevcut_raporlar[link]
 
-    prompt = f"Sen bir ağır vasıta piyasa analistisin. Şu haberi müşteri gözüyle değerlendiren kısa, ferah, Türkçe bir rapor yaz: {baslik}"
+    # PROMPT DEĞİŞTİRİLDİ: Analiz kaldırıldı, sadece objektif çeviri eklendi.
+    prompt = f"Sen profesyonel bir çevirmensin. Aşağıdaki haber başlığını ve konusunu hiçbir yorum, analiz veya 'müşteriye etkisi' gibi çıkarımlar eklemeden doğrudan, objektif bir haber metni olarak Türkçeye çevir. Sadece haberi aktar:\n\n{baslik}"
     try:
         cevap = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         if sheet: sheet.append_row([link, cevap.text])
         st.session_state.mevcut_raporlar[link] = cevap.text 
         return cevap.text
-    except: return "Analiz şu an hazırlanamadı."
+    except: return "Haber şu an çevrilemedi."
 
 # ==========================================
-# 5. İSKELET VE TASARIM
+# 6. İSKELET VE TASARIM
 # ==========================================
 st.set_page_config(page_title="Trucker.Markets", layout="wide", initial_sidebar_state="collapsed")
 
@@ -111,19 +129,20 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Sayfa Yönetimi
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'data' not in st.session_state: st.session_state.data = None
+if 'gosterilecek_baslik' not in st.session_state: st.session_state.gosterilecek_baslik = ""
 
-def view_details(item):
+def view_details(item, turkce_baslik):
     st.session_state.data = item
+    st.session_state.gosterilecek_baslik = turkce_baslik
     st.session_state.page = 'details'
 
 def go_home():
     st.session_state.page = 'home'
 
 # ==========================================
-# 6. EKRANLAR
+# 7. EKRANLAR
 # ==========================================
 if st.session_state.page == 'details':
     st.button("← Geri Dön", on_click=go_home)
@@ -131,21 +150,20 @@ if st.session_state.page == 'details':
     st.write("---")
     
     st.image(resim_bul(h.link, h.title), use_container_width=True)
-    st.title(h.title)
+    st.title(st.session_state.gosterilecek_baslik) # Başlık artık detay sayfasında da Türkçe
     st.caption(f"[Haberin Orijinaline Git]({h.link})")
     
     analiz = st.session_state.mevcut_raporlar.get(h.link)
     
     if not analiz:
-        # SADECE yepyeni bir habere ilk kez tıklandığında yapay zeka çalışır.
-        with st.spinner("Bu raporu okuyan ilk kişisiniz! Yapay zeka sizin için derliyor..."):
-            analiz = rapor_hazirla(h.link, h.title)
+        with st.spinner("Haber Türkçeye çevriliyor..."):
+            analiz = ceviri_hazirla(h.link, h.title)
             
     st.markdown(f'<div style="font-size:1.15rem; line-height:1.8; color:#e0e0e0;">{analiz}</div>', unsafe_allow_html=True)
 
 else:
     st.markdown('<p class="kantan-title">TRUCKER<span>.MARKETS</span></p>', unsafe_allow_html=True)
-    st.write(f"Sektörel İstihbarat | {datetime.now().strftime('%d %B %Y')}")
+    st.write(f"Global Haber Çeviri Portalı | {datetime.now().strftime('%d %B %Y')}")
     
     tab_isimleri = ["🌟 Piyasalar", "🇸🇪 Volvo & Scania", "🇩🇪 Mercedes", "🇺🇸 Freightliner", "🇮🇳 BharatBenz"]
     tabs = st.tabs(tab_isimleri)
@@ -156,12 +174,16 @@ else:
             rss_link = f"https://news.google.com/rss/search?q={urllib.parse.quote(sorgular[i] + ' when:3d')}&hl=en-US"
             haberler = feedparser.parse(rss_link).entries[:6]
             
-            # Arka plan senkronizasyonu tamamen silindi.
+            # ANA SAYFA İÇİN BAŞLIKLARI TOPLUCA TÜRKÇEYE ÇEVİR (1 saniye sürer ve hafızaya alınır)
+            orijinal_basliklar = [h.title for h in haberler]
+            turkce_basliklar = basliklari_cevir(orijinal_basliklar)
             
             rows = [st.columns(3), st.columns(3)]
             for idx, h in enumerate(haberler):
                 col = rows[idx // 3][idx % 3]
                 with col:
                     img = resim_bul(h.link, h.title)
-                    st.markdown(f'<div class="card-container"><img src="{img}" class="card-img"><div class="card-title">{h.title[:70]}...</div></div>', unsafe_allow_html=True)
-                    st.button("Raporu Oku", key=f"btn_{i}_{idx}", on_click=view_details, args=(h,), use_container_width=True)
+                    gosterilecek_baslik = turkce_basliklar[idx] if idx < len(turkce_basliklar) else h.title
+                    
+                    st.markdown(f'<div class="card-container"><img src="{img}" class="card-img"><div class="card-title">{gosterilecek_baslik[:70]}...</div></div>', unsafe_allow_html=True)
+                    st.button("Haberi Oku", key=f"btn_{i}_{idx}", on_click=view_details, args=(h, gosterilecek_baslik), use_container_width=True)
