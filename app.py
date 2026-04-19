@@ -170,6 +170,23 @@ section.main {
     margin-bottom: 1rem;
 }
 
+/* ── st.image() kart içi düzeltme ── */
+[data-testid="stImage"] {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+[data-testid="stImage"] img {
+    border-radius: 0 !important;
+    display: block !important;
+    object-fit: cover !important;
+    height: 185px !important;
+    width: 100% !important;
+}
+/* Kart içinde column padding sıfırla */
+[data-testid="column"] > div > div > div > div {
+    gap: 0 !important;
+}
+
 /* ── Yükleniyor animasyonu ── */
 .loading-bar {
     height: 3px;
@@ -438,6 +455,38 @@ def get_fallback_image(title: str) -> str:
     return FALLBACK_IMAGES["default"]
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def fetch_og_image(url: str) -> str:
+    """
+    Sadece OG görselini çek (haber listesi kartları için hızlı çağrı).
+    Döner: image_url string
+    """
+    try:
+        real_url = resolve_redirect(url)
+        r = requests.get(real_url, headers=HEADERS, timeout=8)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        for prop in ["og:image", "twitter:image", "og:image:secure_url"]:
+            tag = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
+            if tag:
+                img = tag.get("content", "")
+                if is_valid_image(img):
+                    return img
+        # Fallback: ilk büyük <img> tag
+        for img_tag in soup.find_all("img", src=True):
+            src = img_tag.get("src", "")
+            if src.startswith("http") and is_valid_image(src):
+                w = img_tag.get("width", "0")
+                try:
+                    if int(str(w).replace("px","")) >= 200:
+                        return src
+                except Exception:
+                    if len(src) > 40:
+                        return src
+    except Exception:
+        pass
+    return ""
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def scrape_article(url: str) -> dict:
     """
     Orijinal makale sayfasından OG görseli + tam metni çek.
@@ -451,7 +500,7 @@ def scrape_article(url: str) -> dict:
         soup = BeautifulSoup(r.text, "html.parser")
 
         # OG / Twitter görsel
-        for prop in ["og:image", "twitter:image"]:
+        for prop in ["og:image", "twitter:image", "og:image:secure_url"]:
             tag = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
             if tag:
                 img = tag.get("content", "")
@@ -565,15 +614,22 @@ def render_header():
 # HABER LİSTESİ GÖRÜNÜMÜ
 # ──────────────────────────────────────────────────────────────────────────────
 def render_news_card(item: dict, col_key: str):
-    """Tek bir haber kartı render eder."""
-    image_url = ""
+    """Tek bir haber kartı render eder — görsel st.image() ile."""
+    link = item["link"]
 
-    # Cache'te görsel var mı?
-    cached = st.session_state.cache.get(item["link"], {})
-    if cached.get("image"):
-        image_url = cached["image"]
+    # ── Görsel kaynağı: önce cache, sonra canlı OG çekme, sonra fallback ──
+    cached = st.session_state.cache.get(link, {})
+    image_url = cached.get("image", "")
 
-    # Yok ise fallback
+    if not image_url:
+        # Arka planda OG görselini çek (cache'li fonksiyon)
+        image_url = fetch_og_image(link)
+        if image_url:
+            # Sadece görseli cache'e yaz (tr_title/tr_body henüz yok)
+            entry = st.session_state.cache.get(link, {})
+            entry["image"] = image_url
+            st.session_state.cache[link] = entry
+
     if not image_url:
         image_url = get_fallback_image(item.get("tr_title", item.get("title", "")))
 
@@ -581,20 +637,31 @@ def render_news_card(item: dict, col_key: str):
     source   = item.get("source", "")
     date_str = item.get("published", "")[:16] if item.get("published") else ""
 
-    # Kart HTML
-    card_html = f"""
-    <div class="news-card">
-        <img src="{image_url}" alt="{tr_title}" onerror="this.src='https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Above_Gotham.jpg/320px-Above_Gotham.jpg'">
-        <div class="card-body">
-            <div class="card-source">{source}</div>
-            <div class="card-title">{tr_title}</div>
-            <div class="card-date">{date_str}</div>
-        </div>
-    </div>
-    """
-    st.markdown(card_html, unsafe_allow_html=True)
+    # ── Kart üst çerçevesi (CSS ile) ──
+    st.markdown('<div class="news-card" style="border-radius:10px;overflow:hidden;border:1px solid #1e2330;background:#13161f;">', unsafe_allow_html=True)
 
-    if st.button("Haberi Oku →", key=f"btn_{col_key}_{item['link'][-20:]}"):
+    # Görsel — st.image() ile (Streamlit'in yerel proxy'si üzerinden yükler, CSP sorunu yok)
+    try:
+        st.image(image_url, use_container_width=True)
+    except Exception:
+        fallback = get_fallback_image(tr_title)
+        try:
+            st.image(fallback, use_container_width=True)
+        except Exception:
+            st.markdown('<div style="height:185px;background:#1a1e2a;display:flex;align-items:center;justify-content:center;color:#333;font-size:2rem;">🚛</div>', unsafe_allow_html=True)
+
+    # Metin alanı
+    st.markdown(f"""
+    <div class="card-body">
+        <div class="card-source">{source}</div>
+        <div class="card-title">{tr_title}</div>
+        <div class="card-date">{date_str}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if st.button("Haberi Oku →", key=f"btn_{col_key}_{link[-20:]}"):
         st.session_state.selected_item = item
         st.session_state.translated_article = None
         st.session_state.view = "detail"
