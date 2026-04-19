@@ -32,7 +32,7 @@ def get_database():
 sheet = get_database()
 
 # ==========================================
-# 2. HAFIZA VE ÇEVİRİ MOTORLARI
+# 2. HAFIZA MOTORU
 # ==========================================
 if 'mevcut_ceviriler' not in st.session_state:
     st.session_state.mevcut_ceviriler = {}
@@ -44,7 +44,6 @@ if 'mevcut_ceviriler' not in st.session_state:
 
 @st.cache_data(ttl=3600)
 def basliklari_turkceye_cevir(baslik_listesi):
-    """Ana sayfadaki başlıkları toplu ve hızlı şekilde çevirir."""
     if not baslik_listesi: return []
     prompt = "Aşağıdaki İngilizce haber başlıklarını anlamını bozmadan profesyonel bir haber diliyle Türkçeye çevir. Sadece çevirileri alt alta yaz:\n" + "\n".join(baslik_listesi)
     try:
@@ -54,12 +53,45 @@ def basliklari_turkceye_cevir(baslik_listesi):
     except:
         return baslik_listesi
 
+# ==========================================
+# 3. YENİ: MAKALE İÇERİĞİ KAZIYICI
+# ==========================================
+def makale_metni_cek(url):
+    """Haberin asıl sayfasına gidip paragrafları okur."""
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
+        # Google yönlendirmesini aş
+        r_init = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
+        f_url = r_init.url
+        
+        # Gerçek siteye bağlan
+        r = requests.get(f_url, headers=headers, timeout=7)
+        soup = BeautifulSoup(r.content, 'html.parser')
+        
+        # Tüm paragrafları (<p>) topla
+        paragraflar = soup.find_all('p')
+        # Sadece anlamlı uzunluktaki cümleleri birleştir
+        metin = "\n\n".join([p.get_text().strip() for p in paragraflar if len(p.get_text().strip()) > 50])
+        
+        if len(metin) > 150:
+            return metin[:4500] # API'yi yormamak için ilk 4500 karakteri al
+    except: pass
+    return None
+
 def tam_metin_cevirisi(link, baslik):
-    """Haberin tamamını yorumsuz şekilde Türkçeye çevirir."""
     if link in st.session_state.mevcut_ceviriler:
         return st.session_state.mevcut_ceviriler[link]
 
-    prompt = f"Sen profesyonel bir haber çevirmenisin. Aşağıdaki haber konusunu hiçbir yorum, analiz veya ekleme yapmadan, doğrudan ve objektif bir şekilde Türkçeye çevir. Sadece haberi aktar:\n\n{baslik}"
+    # Haberin içine girip gerçek metni alıyoruz
+    orijinal_metin = makale_metni_cek(link)
+
+    if orijinal_metin:
+        # Metin başarıyla çekildiyse çevir
+        prompt = f"Sen profesyonel bir haber çevirmenisin. Aşağıda yabancı bir siteden alınan haberin TAM METNİ bulunuyor. Lütfen bu metni hiçbir kendi yorumunu katmadan, objektif ve akıcı bir haber diliyle tamamen Türkçeye çevir.\n\nHABER METNİ:\n{orijinal_metin}"
+    else:
+        # Site korumalıysa başlığı kullanarak detaylı haber yaz
+        prompt = f"Sen profesyonel bir haber editörüsün. Haberin orijinal sayfasına bot koruması nedeniyle ulaşılamadı. Elimizde sadece şu başlık var: '{baslik}'. Lütfen sadece bu başlığı çevirmekle kalma; sektör bilginle bu gelişmenin ne anlama geldiğini detaylandıran 3 paragraflık doyurucu, objektif bir Türkçe haber metni yaz."
+
     try:
         cevap = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         if sheet: sheet.append_row([link, cevap.text])
@@ -68,13 +100,13 @@ def tam_metin_cevirisi(link, baslik):
     except: return "Çeviri şu an yapılamadı."
 
 # ==========================================
-# 3. GÖRSEL BULUCU
+# 4. GÖRSEL BULUCU
 # ==========================================
 @st.cache_data(ttl=900)
 def resim_bul(url, baslik=""):
     yasakli = ['logo', 'icon', 'favicon', 'google', 'gstatic', 'avatar', 'news.google']
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         r_init = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
         f_url = r_init.url
         r = requests.get(f_url, headers=headers, timeout=5)
@@ -92,7 +124,7 @@ def resim_bul(url, baslik=""):
     return "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/MAN_TGX_18.440_XXL.jpg/800px-MAN_TGX_18.440_XXL.jpg"
 
 # ==========================================
-# 4. TASARIM VE SAYFA YAPISI
+# 5. TASARIM VE SAYFA YAPISI
 # ==========================================
 st.set_page_config(page_title="Trucker.Markets", layout="wide", initial_sidebar_state="collapsed")
 
@@ -126,7 +158,7 @@ if st.session_state.page == 'details':
     
     analiz = st.session_state.mevcut_ceviriler.get(h.link)
     if not analiz:
-        with st.spinner("Haber Türkçeye çevriliyor..."):
+        with st.spinner("Haberin tam metni okunup çevriliyor..."):
             analiz = tam_metin_cevirisi(h.link, h.title)
     
     st.markdown(f'<div style="font-size:1.15rem; line-height:1.8; color:#e0e0e0;">{analiz}</div>', unsafe_allow_html=True)
@@ -144,7 +176,6 @@ else:
         with tab:
             raw_feed = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(sorgular[i] + ' when:3d')}&hl=en-US").entries[:6]
             
-            # ANA SAYFA BAŞLIKLARINI ÇEVİR
             orijinal_basliklar = [h.title for h in raw_feed]
             ceviriler = basliklari_turkceye_cevir(orijinal_basliklar)
             
