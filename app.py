@@ -39,21 +39,17 @@ def resim_bul(google_news_url, baslik=""):
     yasakli = ['logo', 'icon', 'favicon', 'google', 'gstatic', 'avatar', 'news.google', 'blank']
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        # Google Redirector'ı aş
         r_init = requests.get(google_news_url, headers=headers, timeout=5, allow_redirects=True)
         final_url = r_init.url
         
-        # Gerçek siteye gir ve resmi ara
         r = requests.get(final_url, headers=headers, timeout=7)
         soup = BeautifulSoup(r.content, 'html.parser')
         
-        # 1. Öncelik: Meta Etiketleri
         meta = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
         if meta and meta.get("content"):
             img_url = urllib.parse.urljoin(final_url, meta["content"])
             if not any(x in img_url.lower() for x in yasakli): return img_url
             
-        # 2. Öncelik: Haberin içindeki en büyük görsel
         imgs = soup.find_all('img')
         for img in imgs:
             src = img.get('src') or img.get('data-src')
@@ -61,7 +57,6 @@ def resim_bul(google_news_url, baslik=""):
                 if not any(x in src.lower() for x in yasakli): return src
     except: pass
     
-    # Yedek: Markaya özel Wikipedia tır görselleri
     b = baslik.lower()
     if "volvo" in b: return "https://upload.wikimedia.org/wikipedia/commons/thumb/7/77/Volvo_FH_500.jpg/800px-Volvo_FH_500.jpg"
     if "scania" in b: return "https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/Scania_R500_V8.jpg/800px-Scania_R500_V8.jpg"
@@ -69,21 +64,18 @@ def resim_bul(google_news_url, baslik=""):
     return "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/MAN_TGX_18.440_XXL.jpg/800px-MAN_TGX_18.440_XXL.jpg"
 
 # ==========================================
-# ARKA PLAN SENKRONİZASYON MOTORU
+# HIZLANDIRILMIŞ YAPAY ZEKA MOTORU
 # ==========================================
-def rapor_hazirla(link, baslik, sheet):
-    # Eğer veritabanında zaten varsa hazırlama
-    try:
-        all_data = sheet.get_all_records()
-        for row in all_data:
-            if row.get("Link") == link: return row.get("Analiz")
-    except: pass
+def rapor_hazirla(link, baslik, sheet, mevcut_raporlar):
+    # Eğer zaten hafızada varsa hiç bekleme
+    if link in mevcut_raporlar:
+        return mevcut_raporlar[link]
 
-    # Yoksa hazırla ve kaydet
     prompt = f"Sen bir ağır vasıta piyasa analistisin. Şu haberi müşteri gözüyle değerlendiren kısa, ferah, Türkçe bir rapor yaz: {baslik}"
     try:
         cevap = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-        sheet.append_row([link, cevap.text])
+        if sheet: sheet.append_row([link, cevap.text])
+        mevcut_raporlar[link] = cevap.text # Yerel hafızayı da anında güncelle
         return cevap.text
     except: return "Analiz şu an hazırlanamadı."
 
@@ -108,6 +100,16 @@ st.markdown("""
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'data' not in st.session_state: st.session_state.data = None
 
+# 🚀 YENİ: VERİTABANINI TEK SEFERDE (TOPLU) ÇEKMEK
+sheet = get_database()
+mevcut_raporlar = {}
+if sheet:
+    try:
+        # Tüm tabloyu sadece 1 kere okur, trafik sıkışıklığını bitirir!
+        for row in sheet.get_all_records():
+            mevcut_raporlar[row.get("Link")] = row.get("Analiz")
+    except: pass
+
 # ==========================================
 # EKRANLAR
 # ==========================================
@@ -119,15 +121,13 @@ if st.session_state.page == 'details':
     st.image(resim_bul(h.link, h.title), use_container_width=True)
     st.title(h.title)
     
-    # Raporu veritabanından çek (Önceden hazırlandığı için anında gelecek)
-    sheet = get_database()
-    analiz = "Rapor bulunamadı."
-    if sheet:
-        recs = sheet.get_all_records()
-        for r in recs:
-            if r.get("Link") == h.link:
-                analiz = r.get("Analiz")
-                break
+    # Raporu anında yerel hafızadan getir
+    analiz = mevcut_raporlar.get(h.link)
+    
+    # Eğer rapor hafızada yoksa (ilk kez tıklanıyorsa) şimdi hazırla
+    if not analiz:
+        with st.spinner("Yeni rapor derleniyor..."):
+            analiz = rapor_hazirla(h.link, h.title, sheet, mevcut_raporlar)
     
     st.markdown(f'<div style="font-size:1.2rem; line-height:1.8;">{analiz}</div>', unsafe_allow_html=True)
     st.caption(f"[Orijinal Kaynak]({h.link})")
@@ -136,21 +136,23 @@ else:
     st.markdown('<p class="kantan-title">TRUCKER<span>.MARKETS</span></p>', unsafe_allow_html=True)
     st.write(f"Sektörel İstihbarat | {datetime.now().strftime('%d %B %Y')}")
     
-    tabs = st.tabs(["🌟 Piyasalar", "🇸🇪 Volvo & Scania", "🇩🇪 Mercedes", "🇺🇸 Freightliner", "🇮🇳 BharatBenz"])
+    tab_isimleri = ["🌟 Piyasalar", "🇸🇪 Volvo & Scania", "🇩🇪 Mercedes", "🇺🇸 Freightliner", "🇮🇳 BharatBenz"]
+    tabs = st.tabs(tab_isimleri)
     sorgular = ["heavy truck news", "Volvo Scania trucks", "Mercedes Actros news", "Freightliner trucks", "BharatBenz trucks"]
-    
-    sheet = get_database()
 
     for i, tab in enumerate(tabs):
         with tab:
             haberler = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(sorgular[i])}&hl=en-US").entries[:6]
             
-            # --- ARKA PLAN SENKRONİZASYONU ---
-            # Kullanıcı sekmeyi açtığı an ilk 3 haberi arka planda hazırlar
-            if sheet:
-                with st.status(f"{tab.label} raporları önceden hazırlanıyor...", expanded=False):
-                    for h in haberler[:3]:
-                        rapor_hazirla(h.link, h.title, sheet)
+            # --- AKILLI ARKA PLAN SENKRONİZASYONU ---
+            # Sadece EKSİK olan haberleri bul
+            eksik_haberler = [h for h in haberler[:3] if h.link not in mevcut_raporlar]
+            
+            # Yükleme çubuğu SADECE eksik haber varsa ve sayfa yüklenirken çıkar
+            if sheet and eksik_haberler:
+                with st.status(f"{tab_isimleri[i]} güncelleniyor...", expanded=False):
+                    for h in eksik_haberler:
+                        rapor_hazirla(h.link, h.title, sheet, mevcut_raporlar)
             
             # HABER KARTLARI
             rows = [st.columns(3), st.columns(3)]
