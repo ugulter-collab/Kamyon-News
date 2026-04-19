@@ -32,9 +32,8 @@ def get_database():
 sheet = get_database()
 
 # ==========================================
-# 2. RAM HAFIZASI (SÜPER HIZLI GEÇİŞ İÇİN)
+# 2. RAM HAFIZASI (VERİTABANINI TEK SEFERDE OKU)
 # ==========================================
-# Veritabanı sadece site ilk açıldığında 1 kez okunur ve RAM'e kaydedilir.
 if 'mevcut_raporlar' not in st.session_state:
     st.session_state.mevcut_raporlar = {}
     if sheet:
@@ -80,14 +79,12 @@ def resim_bul(google_news_url, baslik=""):
 # 4. YAPAY ZEKA MOTORU
 # ==========================================
 def rapor_hazirla(link, baslik):
-    # Rapor RAM'de varsa saniye kaybetmeden getir
     if link in st.session_state.mevcut_raporlar:
         return st.session_state.mevcut_raporlar[link]
 
     prompt = f"Sen bir ağır vasıta piyasa analistisin. Şu haberi müşteri gözüyle değerlendiren kısa, ferah, Türkçe bir rapor yaz: {baslik}"
     try:
         cevap = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-        # Yeni raporu hem Kalıcı Hafızaya (Sheets) hem de Hızlı Hafızaya (RAM) kaydet
         if sheet: sheet.append_row([link, cevap.text])
         st.session_state.mevcut_raporlar[link] = cevap.text 
         return cevap.text
@@ -114,7 +111,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Sayfa Yönetimi (Direkt Geçiş İçin Optimize Edildi)
+# Sayfa Yönetimi
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'data' not in st.session_state: st.session_state.data = None
 
@@ -137,12 +134,11 @@ if st.session_state.page == 'details':
     st.title(h.title)
     st.caption(f"[Haberin Orijinaline Git]({h.link})")
     
-    # Raporu anında yerel hafızadan (RAM) getir
     analiz = st.session_state.mevcut_raporlar.get(h.link)
     
-    # Çok düşük bir ihtimal de olsa arka plan yetişemediyse anında derle
     if not analiz:
-        with st.spinner("Yeni rapor derleniyor..."):
+        # SADECE yepyeni bir habere ilk kez tıklandığında yapay zeka çalışır.
+        with st.spinner("Bu raporu okuyan ilk kişisiniz! Yapay zeka sizin için derliyor..."):
             analiz = rapor_hazirla(h.link, h.title)
             
     st.markdown(f'<div style="font-size:1.15rem; line-height:1.8; color:#e0e0e0;">{analiz}</div>', unsafe_allow_html=True)
@@ -157,23 +153,15 @@ else:
 
     for i, tab in enumerate(tabs):
         with tab:
-            # RSS üzerinden haberleri çek
             rss_link = f"https://news.google.com/rss/search?q={urllib.parse.quote(sorgular[i] + ' when:3d')}&hl=en-US"
             haberler = feedparser.parse(rss_link).entries[:6]
             
-            # Arka planda eksik raporları bul ve doldur
-            eksik_haberler = [h for h in haberler[:3] if h.link not in st.session_state.mevcut_raporlar]
-            if eksik_haberler:
-                with st.status(f"{tab_isimleri[i]} güncelleniyor...", expanded=False):
-                    for h in eksik_haberler:
-                        rapor_hazirla(h.link, h.title)
+            # Arka plan senkronizasyonu tamamen silindi.
             
-            # Haberleri Ekrana Diz
             rows = [st.columns(3), st.columns(3)]
             for idx, h in enumerate(haberler):
                 col = rows[idx // 3][idx % 3]
                 with col:
                     img = resim_bul(h.link, h.title)
                     st.markdown(f'<div class="card-container"><img src="{img}" class="card-img"><div class="card-title">{h.title[:70]}...</div></div>', unsafe_allow_html=True)
-                    # YENİ: on_click yapısı ile ara yüklemeler tamamen engellendi
                     st.button("Raporu Oku", key=f"btn_{i}_{idx}", on_click=view_details, args=(h,), use_container_width=True)
